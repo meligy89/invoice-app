@@ -5,12 +5,19 @@ import re
 from fpdf import FPDF
 import tempfile
 import os
+import io
+import json
 import yagmail
 from google.cloud import vision
-import io
 
-# --- Set Google Cloud credentials ---
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp-credentials.json"
+# --- Set Google Cloud credentials from Streamlit Secrets ---
+if "GOOGLE_APPLICATION_CREDENTIALS_JSON" in st.secrets:
+    with open("gcp-credentials.json", "w") as f:
+        f.write(st.secrets["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp-credentials.json"
+else:
+    st.error("❌ Google Cloud credentials not found in Streamlit secrets.")
+    st.stop()
 
 # --- Google Cloud Vision OCR ---
 def extract_text_google_ocr(image):
@@ -31,7 +38,7 @@ def extract_text_google_ocr(image):
     lines = [line.strip() for line in full_text.split('\n') if line.strip()]
     return lines
 
-# --- Extract Items using Google OCR ---
+# --- Extract Items ---
 def extract_items(image):
     text_lines = extract_text_google_ocr(image)
     ignore_keywords = ["subtotal", "vat", "total", "service", "thank", "count", "cash", "payment", "balance", "%", "tip", "delivery"]
@@ -78,7 +85,7 @@ def extract_items(image):
 
         items.append({
             "Item": item_name if item_name else "Unnamed Item",
-            "Qty (Invoice)": qty,
+            "Qty": qty,
             "Unit Price (EGP)": unit_price,
             "Total (EGP)": price
         })
@@ -90,11 +97,6 @@ def generate_pdf(df_selected, summary, per_person, filename="invoice.pdf"):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-
-    logo_path = "logo.png"
-    if os.path.exists(logo_path):
-        pdf.image(logo_path, x=10, y=8, w=33)
-        pdf.ln(30)
 
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(200, 10, txt="Invoice Summary", ln=True, align='C')
@@ -119,8 +121,68 @@ def send_email(recipient, subject, body, attachment_path):
     sender = os.environ.get("EMAIL_USER")
     password = os.environ.get("EMAIL_PASS")
     if not sender or not password:
-        st.error("Email credentials not set in environment variables.")
+        st.error("❌ Email credentials not set in environment variables.")
         return
     yag = yagmail.SMTP(sender, password)
     yag.send(to=recipient, subject=subject, contents=body, attachments=attachment_path)
     return True
+
+# --- Streamlit App UI ---
+st.title("💸 Yalla Split & Pay")
+st.write("Upload your invoice image, extract items, split the bill, and send via email!")
+
+uploaded_image = st.file_uploader("📸 Upload an invoice image", type=["png", "jpg", "jpeg"])
+
+if uploaded_image:
+    image = Image.open(uploaded_image)
+    st.image(image, caption="Uploaded Image", use_column_width=True)
+
+    with st.spinner("🧠 Extracting items from invoice..."):
+        df = extract_items(image)
+
+    if not df.empty:
+        st.success("✅ Items extracted successfully!")
+        st.dataframe(df)
+
+        st.subheader("🔢 Invoice Summary")
+        service_charge = st.number_input("Service Charge %", value=12.0)
+        vat = st.number_input("VAT %", value=14.0)
+        tip = st.number_input("Optional Tip (EGP)", value=0.0)
+
+        subtotal = df["Total (EGP)"].sum()
+        service_amt = subtotal * (service_charge / 100)
+        vat_amt = (subtotal + service_amt) * (vat / 100)
+        total = subtotal + service_amt + vat_amt + tip
+
+        summary = {
+            "Subtotal": subtotal,
+            "Service Charge": service_amt,
+            "VAT": vat_amt,
+            "Tip": tip,
+            "Grand Total": total
+        }
+
+        st.write(summary)
+
+        people = st.number_input("Number of People to Split With", min_value=1, value=2, step=1)
+        per_person = round(total / people, 2)
+        st.write(f"Each person pays: **EGP {per_person:.2f}**")
+
+        if st.button("📄 Generate PDF Invoice"):
+            pdf_path = generate_pdf(df, summary, per_person)
+            with open(pdf_path, "rb") as f:
+                st.download_button("Download Invoice PDF", f, file_name="invoice.pdf")
+
+        with st.expander("📧 Send via Email"):
+            email = st.text_input("Recipient Email")
+            subject = st.text_input("Subject", value="Your Shared Invoice")
+            body = st.text_area("Message", value="Here's your split invoice summary.")
+            if st.button("Send Email"):
+                pdf_path = generate_pdf(df, summary, per_person)
+                result = send_email(email, subject, body, pdf_path)
+                if result:
+                    st.success("📤 Email sent successfully!")
+                else:
+                    st.error("Failed to send email.")
+    else:
+        st.warning("⚠️ No items were detected. Try a clearer image.")
