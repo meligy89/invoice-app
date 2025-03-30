@@ -2,6 +2,7 @@ import streamlit as st
 from PIL import Image, ImageEnhance
 import pandas as pd
 import pytesseract
+import numpy as np
 import re
 from fpdf import FPDF
 import tempfile
