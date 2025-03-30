@@ -2,28 +2,26 @@ import streamlit as st
 from PIL import Image, ImageEnhance
 import pandas as pd
 import pytesseract
-import numpy as np
 import re
 from fpdf import FPDF
 import tempfile
 import os
 import io
 import yagmail
-import openai
 import json
+from openai import OpenAI
+import numpy as np
 
-# --- Set OpenAI API Key ---
-openai.api_key = st.secrets["openai_api_key"] if "openai_api_key" in st.secrets else os.getenv("OPENAI_API_KEY")
+# --- OpenAI Client Setup ---
+client = OpenAI(api_key=st.secrets["openai_api_key"] if "openai_api_key" in st.secrets else os.getenv("OPENAI_API_KEY"))
 
 # --- OCR with Tesseract ---
 def extract_text_tesseract(image):
-    # Ensure image is in correct format
     if isinstance(image, np.ndarray):
         image = Image.fromarray(image)
     elif not isinstance(image, Image.Image):
         image = Image.open(image)
 
-    # Convert to grayscale and enhance contrast
     image = image.convert("L")
     enhancer = ImageEnhance.Contrast(image)
     image = enhancer.enhance(2.0)
@@ -42,13 +40,13 @@ def parse_with_gpt(text_lines):
         f"Lines:\n{chr(10).join(text_lines)}"
     )
 
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2
     )
 
-    content = response["choices"][0]["message"]["content"]
+    content = response.choices[0].message.content
     st.subheader("🧠 GPT Raw Response")
     st.code(content)
 
