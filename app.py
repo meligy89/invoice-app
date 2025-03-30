@@ -121,21 +121,13 @@ if os.path.exists(logo_path):
     st.image(logo_path, width=150)
 
 st.title("💸 Yalla Split & Pay")
-st.write("Take or upload a photo of your invoice, choose your items, and get your share!")
+st.write("Upload your invoice image, extract items, choose what you had, and get your share!")
 
-# --- Upload OR Take Photo ---
-st.write("📸 Upload a receipt or take a photo")
-uploaded_image = st.file_uploader("Upload an image", type=["png", "jpg", "jpeg"])
-camera_image = st.camera_input("Or take a photo")
+uploaded_image = st.file_uploader("📸 Upload an invoice image", type=["png", "jpg", "jpeg"])
 
-image = None
 if uploaded_image:
     image = Image.open(uploaded_image)
-elif camera_image:
-    image = Image.open(camera_image)
-
-if image:
-    st.image(image, caption="Your Image", use_column_width=True)
+    st.image(image, caption="Uploaded Image", use_container_width=True)
 
     with st.spinner("🧠 Extracting items from invoice..."):
         df = extract_items(image)
