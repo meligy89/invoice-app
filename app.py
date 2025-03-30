@@ -9,10 +9,9 @@ import os
 import io
 import yagmail
 import json
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 import numpy as np
 import time
-from openai.error import RateLimitError
 
 # --- OpenAI Client Setup ---
 client = OpenAI(api_key=st.secrets["openai_api_key"] if "openai_api_key" in st.secrets else os.getenv("OPENAI_API_KEY"))
