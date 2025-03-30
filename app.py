@@ -114,12 +114,18 @@ st.set_page_config(page_title="Invoice Splitter", layout="wide")
 st.markdown("<style>body { font-family: 'Arial', sans-serif; }</style>", unsafe_allow_html=True)
 
 st.image("logo.png", width=150)
-st.title("Yalla Split & Pay")
+st.title("Invoice Splitter + Email Export")
 
 uploaded_file = st.file_uploader("Upload Invoice Image", type=["jpg", "jpeg", "png"])
+captured_image = st.camera_input("Or capture invoice via camera")
 
+image = None
 if uploaded_file:
     image = Image.open(uploaded_file)
+elif captured_image:
+    image = Image.open(captured_image)
+
+if image:
     df = extract_items(image)
 
     if df.empty:
