@@ -1,12 +1,16 @@
 import streamlit as st
 from PIL import Image, ImageEnhance, ImageFilter
-import pytesseract
 import pandas as pd
+import numpy as np
 import re
 from fpdf import FPDF
 import tempfile
 import os
 import yagmail
+from paddleocr import PaddleOCR
+
+# --- Initialize PaddleOCR ---
+ocr_engine = PaddleOCR(use_angle_cls=True, lang='en')
 
 # --- OCR Helper Functions ---
 def enhance_image(image):
@@ -15,19 +19,17 @@ def enhance_image(image):
     enhancer = ImageEnhance.Contrast(image)
     return enhancer.enhance(2)
 
-# --- Smarter OCR for Real-World Bills ---
+# --- PaddleOCR-powered Item Extractor ---
 def extract_items(image):
     image = enhance_image(image)
-    raw_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DATAFRAME)
+    image_np = np.array(image)
 
-    raw_data = raw_data.dropna(subset=["text"])
-    raw_data = raw_data[raw_data["conf"] > 40]  # Filter low-confidence OCR results
-    text_lines = raw_data.groupby("line_num")["text"].apply(lambda x: " ".join(x)).tolist()
+    result = ocr_engine.ocr(image_np, cls=True)
+    text_lines = [line[1][0] for line in result[0] if line[1][0].strip()]
+    items = []
 
     ignore_keywords = ["subtotal", "vat", "total", "service", "thank", "count", "cash", "payment", "balance", "%", "tip", "delivery"]
     currency_variants = ["EGP", "LE", "L.E.", "L.E", "جنيه"]
-
-    items = []
 
     for i, line in enumerate(text_lines):
         if any(x.lower() in line.lower() for x in ignore_keywords):
@@ -129,50 +131,20 @@ if uploaded_file:
     df = extract_items(image)
 
     if df.empty:
-        st.warning("No valid items found. Try uploading a clearer image or enter items manually.")
+        st.warning("No valid items found. Try uploading a clearer image.")
 
-        # Raw OCR text and line suggestions
-        raw_text = pytesseract.image_to_string(enhance_image(image))
-        raw_lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
-
-        with st.expander("🔍 Show Raw OCR Text"):
-            st.text(raw_text)
-
-        st.subheader("📋 Manually Correct or Add Items")
-
-        num_manual_items = st.number_input("How many items do you want to enter?", min_value=1, step=1, value=min(5, len(raw_lines)))
+        st.subheader("📋 Manually Enter Items")
+        num_manual_items = st.number_input("How many items do you want to enter?", min_value=1, step=1, value=1)
         manual_items = []
 
         for i in range(num_manual_items):
-            suggested_line = raw_lines[i] if i < len(raw_lines) else ""
-            qty_guess = 1
-            price_guess = 0.0
-
-            price_match = re.search(r'([\d,]+\.\d{2})', suggested_line)
-            if price_match:
-                try:
-                    price_guess = float(price_match.group(1).replace(',', ''))
-                except:
-                    pass
-
-            qty_match = re.match(r'^(\d+)[\s\-_.xX*]*(.*)', suggested_line)
-            name_guess = suggested_line
-            if qty_match:
-                try:
-                    qty_guess = int(qty_match.group(1))
-                    name_guess = qty_match.group(2)
-                except:
-                    qty_guess = 1
-
-            name_guess = re.sub(r'[^\w\s]', '', name_guess).title()
-
             with st.expander(f"Item {i + 1}"):
-                item_name = st.text_input(f"Item Name {i + 1}", value=name_guess, key=f"name_{i}")
-                qty = st.number_input(f"Quantity {i + 1}", min_value=1, step=1, value=qty_guess, key=f"qty_{i}")
-                unit_price = st.number_input(f"Unit Price (EGP) {i + 1}", min_value=0.0, step=0.1, value=price_guess, key=f"price_{i}")
+                item_name = st.text_input(f"Item Name {i + 1}", key=f"name_{i}")
+                qty = st.number_input(f"Quantity {i + 1}", min_value=1, step=1, value=1, key=f"qty_{i}")
+                unit_price = st.number_input(f"Unit Price (EGP) {i + 1}", min_value=0.0, step=0.1, value=0.0, key=f"price_{i}")
                 total = round(qty * unit_price, 2)
                 manual_items.append({
-                    "Item": item_name,
+                    "Item": item_name.title(),
                     "Qty": qty,
                     "Unit Price (EGP)": unit_price,
                     "Total (EGP)": total
