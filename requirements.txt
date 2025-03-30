@@ -8,3 +8,7 @@ streamlit
 openai
 python-dotenv  # if you're using environment variables
 openai>=1.0.0
+pytesseract
+opencv-python-headless
+pdfplumber
+reportlab
