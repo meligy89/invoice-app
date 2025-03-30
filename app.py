@@ -15,7 +15,7 @@ def enhance_image(image):
     enhancer = ImageEnhance.Contrast(image)
     return enhancer.enhance(2)
 
-# --- Smart Generic Item Extractor ---
+# --- Improved Smart OCR for Bills ---
 def extract_items(image):
     image = enhance_image(image)
     text = pytesseract.image_to_string(image)
@@ -23,49 +23,52 @@ def extract_items(image):
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     items = []
 
-    for i, line in enumerate(lines):
-        if "EGP" in line and not any(x in line for x in ["Subtotal", "Service", "Total", "VAT", "%", "Count"]):
-            price_match = re.search(r'EGP\s*([\d,]+\.\d{2})', line)
-            if not price_match:
-                continue
-            price = float(price_match.group(1).replace(',', ''))
-            line_clean = re.sub(r'EGP\s*[\d,]+\.\d{2}', '', line).strip()
+    ignore_keywords = ["subtotal", "vat", "total", "service", "thank", "count", "cash", "payment", "balance", "%", "tip"]
 
-            qty = 1
-            item_name = ""
-            qty_match = re.match(r'^(\d+)[\s\-_.]*(.*)', line_clean)
-            if qty_match:
-                try:
-                    qty = int(qty_match.group(1))
-                except:
-                    qty = 1
-                item_name = qty_match.group(2)
-            elif i > 0:
-                prev_line = lines[i - 1]
-                prev_match = re.match(r'^(\d+)[\s\-_.]*(.*)', prev_line)
-                if prev_match:
-                    try:
-                        qty = int(prev_match.group(1))
-                    except:
-                        qty = 1
-                    item_name = prev_match.group(2)
-                else:
-                    item_name = line_clean
+    for i, line in enumerate(lines):
+        if any(x.lower() in line.lower() for x in ignore_keywords):
+            continue
+
+        # Normalize currency formats
+        line = line.replace("LE", "EGP").replace("L.E.", "EGP").replace("L.E", "EGP")
+        price_match = re.search(r'(EGP)?\s*([\d,]+\.\d{2})\s*(EGP)?', line, re.IGNORECASE)
+
+        if not price_match:
+            continue
+
+        price = float(price_match.group(2).replace(',', ''))
+        line_clean = re.sub(r'(EGP)?\s*[\d,]+\.\d{2}\s*(EGP)?', '', line, flags=re.IGNORECASE).strip()
+
+        # Try extracting quantity
+        qty = 1
+        item_name = ""
+        qty_match = re.match(r'^(\d+)[\s\-_.xX*]*(.*)', line_clean)
+        if qty_match:
+            try:
+                qty = int(qty_match.group(1))
+            except:
+                qty = 1
+            item_name = qty_match.group(2)
+        else:
+            if i > 0:
+                prev_line = lines[i - 1].strip()
+                if not any(x.lower() in prev_line.lower() for x in ignore_keywords):
+                    item_name = prev_line
             else:
                 item_name = line_clean
 
-            item_name = re.sub(r'[^\w\s]', '', item_name)
-            item_name = ' '.join(item_name.split())
-            item_name = item_name.title()
+        item_name = re.sub(r'[^\w\s]', '', item_name)
+        item_name = ' '.join(item_name.split())
+        item_name = item_name.title()
 
-            unit_price = round(price / qty, 2) if qty > 0 else price
+        unit_price = round(price / qty, 2) if qty > 0 else price
 
-            items.append({
-                "Item": item_name,
-                "Qty (Invoice)": qty,
-                "Unit Price (EGP)": unit_price,
-                "Total (EGP)": price
-            })
+        items.append({
+            "Item": item_name if item_name else "Unnamed Item",
+            "Qty (Invoice)": qty,
+            "Unit Price (EGP)": unit_price,
+            "Total (EGP)": price
+        })
 
     return pd.DataFrame(items)
 
@@ -110,22 +113,16 @@ def send_email(recipient, subject, body, attachment_path):
     return True
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Invoice Splitter", layout="wide")
+st.set_page_config(page_title="Yalla Split & Pay", layout="wide")
 st.markdown("<style>body { font-family: 'Arial', sans-serif; }</style>", unsafe_allow_html=True)
 
 st.image("logo.png", width=150)
 st.title("Yalla Split & Pay")
 
 uploaded_file = st.file_uploader("Upload Invoice Image", type=["jpg", "jpeg", "png"])
-captured_image = st.camera_input("Or capture invoice via camera")
 
-image = None
 if uploaded_file:
     image = Image.open(uploaded_file)
-elif captured_image:
-    image = Image.open(captured_image)
-
-if image:
     df = extract_items(image)
 
     if df.empty:
