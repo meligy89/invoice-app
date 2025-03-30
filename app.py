@@ -70,7 +70,6 @@ def extract_items(image):
 
     return pd.DataFrame(items)
 
-
 # --- PDF Generator with Logo and Sans-Serif Font ---
 def generate_pdf(df_selected, summary, per_person, filename="invoice.pdf"):
     pdf = FPDF()
