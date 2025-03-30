@@ -6,6 +6,7 @@ from fpdf import FPDF
 import io
 import openai
 import os
+import json
 
 # Set your OpenAI API key here or in Streamlit Secrets
 openai.api_key = st.secrets["openai_api_key"] if "openai_api_key" in st.secrets else os.getenv("OPENAI_API_KEY")
@@ -18,11 +19,10 @@ def extract_text_tesseract(image):
 # ---------- GPT PARSING ----------
 def parse_with_gpt(text_lines):
     prompt = (
-        "You are a helpful assistant extracting itemized invoice data. "
-        "From the following lines, extract a JSON list of items with: Item, Qty, Unit Price, Total. "
-        "Group multiline item descriptions into one line if needed.\n\n"
-        "Example Output:\n"
-        "[{\"Item\": \"سلطة طحينة\", \"Qty\": 2, \"Unit Price\": 40.00, \"Total\": 80.00}, ...]\n\n"
+        "You are an intelligent invoice parser. From the following lines, extract items with:\n"
+        "- Item (string)\n- Qty (int)\n- Unit Price (float)\n- Total (float)\n\n"
+        "Return a valid JSON array, like:\n"
+        "[{\"Item\": \"سلطة طحينة\", \"Qty\": 2, \"Unit Price\": 40.0, \"Total\": 80.0}]\n\n"
         f"Lines:\n{chr(10).join(text_lines)}"
     )
 
@@ -33,8 +33,11 @@ def parse_with_gpt(text_lines):
     )
 
     content = response["choices"][0]["message"]["content"]
+    st.subheader("🧠 GPT Raw Response")
+    st.code(content)
+
     try:
-        data = eval(content, {}, {})
+        data = json.loads(content)
         return pd.DataFrame(data)
     except Exception as e:
         st.error(f"Failed to parse GPT output: {e}")
