@@ -1,46 +1,23 @@
 import streamlit as st
 from PIL import Image
 import pandas as pd
+import pytesseract
 import re
 from fpdf import FPDF
 import tempfile
 import os
 import io
-import json
 import yagmail
-from google.cloud import vision
 
-# --- Set Google Cloud credentials from Streamlit Secrets ---
-if "GOOGLE_APPLICATION_CREDENTIALS_JSON" in st.secrets:
-    with open("gcp-credentials.json", "w") as f:
-        f.write(st.secrets["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp-credentials.json"
-else:
-    st.error("❌ Google Cloud credentials not found in Streamlit secrets.")
-    st.stop()
-
-# --- Google Cloud Vision OCR ---
-def extract_text_google_ocr(image):
-    client = vision.ImageAnnotatorClient()
-
-    with io.BytesIO() as output:
-        image.save(output, format="PNG")
-        content = output.getvalue()
-
-    image_for_api = vision.Image(content=content)
-    response = client.text_detection(image=image_for_api)
-    texts = response.text_annotations
-
-    if not texts:
-        return []
-
-    full_text = texts[0].description
-    lines = [line.strip() for line in full_text.split('\n') if line.strip()]
+# --- OCR with Tesseract ---
+def extract_text_tesseract(image):
+    text = pytesseract.image_to_string(image)
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
     return lines
 
 # --- Extract Items ---
 def extract_items(image):
-    text_lines = extract_text_google_ocr(image)
+    text_lines = extract_text_tesseract(image)
     ignore_keywords = ["subtotal", "vat", "total", "service", "thank", "count", "cash", "payment", "balance", "%", "tip", "delivery"]
     currency_variants = ["EGP", "LE", "L.E.", "L.E", "\u062c\u0646\u064a\u0647"]
 
