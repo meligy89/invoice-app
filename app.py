@@ -17,56 +17,84 @@ def enhance_image(image):
 
 import re
 import pandas as pd
+import pytesseract
+from PIL import ImageEnhance, ImageFilter
 
 def extract_items(image):
-    from PIL import ImageEnhance, ImageFilter
+    # Enhance image for OCR
     image = image.convert('L')
     image = image.filter(ImageFilter.SHARPEN)
     enhancer = ImageEnhance.Contrast(image)
     image = enhancer.enhance(2)
 
+    # Extract OCR text
     text = pytesseract.image_to_string(image)
+    
+    # Debug outputs (comment out if not needed)
+    # import streamlit as st
+    # st.subheader("🔍 OCR Debug Output")
+    # st.text(text)
+    
     lines = [line.strip() for line in text.split('\n') if line.strip()]
+    
+    # Debug: show cleaned lines for parsing
+    # st.write("🧾 Cleaned Lines for Parsing:", lines)
+    
     items = []
 
+    # Loop through lines to parse items
     for i, line in enumerate(lines):
+        # Only consider lines containing EGP that aren't summary lines
         if "EGP" in line and not any(x in line for x in ["Subtotal", "Service", "Total", "VAT", "%", "Count"]):
+            # Extract price using a regex pattern
             price_match = re.search(r'EGP\s*([\d,]+\.\d{2})', line)
-            price = float(price_match.group(1).replace(',', '')) if price_match else None
+            if not price_match:
+                continue
+            price = float(price_match.group(1).replace(',', ''))
+
+            # Remove price portion from line
             line_clean = re.sub(r'EGP\s*[\d,]+\.\d{2}', '', line).strip()
-
+            
             qty = 1
-            item = ""
-
-            # Extract quantity + item
+            item_name = ""
+            
+            # Try to extract quantity and item from the current line
             qty_match = re.match(r'^(\d+)[\s\-_.]*(.*)', line_clean)
             if qty_match:
-                qty = int(qty_match.group(1))
-                item = qty_match.group(2)
+                try:
+                    qty = int(qty_match.group(1))
+                except:
+                    qty = 1
+                item_name = qty_match.group(2)
+            # Fallback: check previous line if not found in current line
             elif i > 0:
-                prev = lines[i - 1]
-                prev_match = re.match(r'^(\d+)[\s\-_.]*(.*)', prev)
+                prev_line = lines[i - 1]
+                prev_match = re.match(r'^(\d+)[\s\-_.]*(.*)', prev_line)
                 if prev_match:
-                    qty = int(prev_match.group(1))
-                    item = prev_match.group(2)
+                    try:
+                        qty = int(prev_match.group(1))
+                    except:
+                        qty = 1
+                    item_name = prev_match.group(2)
                 else:
-                    item = line_clean
+                    item_name = line_clean
             else:
-                item = line_clean
+                item_name = line_clean
 
-            # Clean item name
-            item = re.sub(r'[^\w\s]', '', item)
-            item = ' '.join(item.split())  # normalize spaces
-            item = item.title()
+            # Clean item name: remove non-alphanumeric characters (except spaces) and normalize spaces
+            item_name = re.sub(r'[^\w\s]', '', item_name)
+            item_name = ' '.join(item_name.split())
+            item_name = item_name.title()  # Convert to title case
 
-            if price:
-                unit_price = round(price / qty, 2) if qty > 0 else price
-                items.append({
-                    "Item": item,
-                    "Qty (Invoice)": qty,
-                    "Unit Price (EGP)": unit_price,
-                    "Total (EGP)": price
-                })
+            # Calculate unit price
+            unit_price = round(price / qty, 2) if qty > 0 else price
+
+            items.append({
+                "Item": item_name,
+                "Qty (Invoice)": qty,
+                "Unit Price (EGP)": unit_price,
+                "Total (EGP)": price
+            })
 
     return pd.DataFrame(items)
 
