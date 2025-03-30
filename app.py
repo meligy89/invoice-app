@@ -1,5 +1,5 @@
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageEnhance
 import pandas as pd
 import pytesseract
 import re
@@ -16,6 +16,17 @@ openai.api_key = st.secrets["openai_api_key"] if "openai_api_key" in st.secrets 
 
 # --- OCR with Tesseract ---
 def extract_text_tesseract(image):
+    # Ensure image is in correct format
+    if isinstance(image, np.ndarray):
+        image = Image.fromarray(image)
+    elif not isinstance(image, Image.Image):
+        image = Image.open(image)
+
+    # Convert to grayscale and enhance contrast
+    image = image.convert("L")
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(2.0)
+
     text = pytesseract.image_to_string(image)
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     return lines
