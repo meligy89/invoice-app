@@ -7,3 +7,4 @@ google-cloud-vision
 streamlit
 openai
 python-dotenv  # if you're using environment variables
+openai>=1.0.0
