@@ -136,63 +136,51 @@ if uploaded_image:
 
         if not df.empty:
             st.success("✅ Items extracted successfully!")
-            st.write("### 🛒 Select your items")
+            st.write("### 🛒 Full Invoice View")
+            st.dataframe(df)
 
-            selected_rows = st.multiselect(
-                "Select what you personally ordered:",
-                options=df.index,
-                format_func=lambda i: f"{df.at[i, 'Qty']}x {df.at[i, 'Item']} - EGP {df.at[i, 'Total (EGP)']:.2f}"
-            )
+            st.subheader("💰 Total Bill Summary")
+            service_charge = st.number_input("Service Charge %", value=12.0, key="total_service")
+            vat = st.number_input("VAT %", value=14.0, key="total_vat")
+            tip = st.number_input("Optional Tip (EGP)", value=0.0, key="total_tip")
 
-            if selected_rows:
-                df_selected = df.loc[selected_rows]
-                st.dataframe(df_selected)
+            total_subtotal = df["Total (EGP)"].sum()
+            total_service = total_subtotal * (service_charge / 100)
+            total_vat = (total_subtotal + total_service) * (vat / 100)
+            total_total = total_subtotal + total_service + total_vat + tip
 
-                st.subheader("💰 Your Personal Summary")
-                service_charge = st.number_input("Service Charge %", value=12.0, key="your_service")
-                vat = st.number_input("VAT %", value=14.0, key="your_vat")
-                tip = st.number_input("Optional Tip (EGP)", value=0.0, key="your_tip")
+            full_summary = {
+                "Subtotal": total_subtotal,
+                "Service Charge": total_service,
+                "VAT": total_vat,
+                "Tip": tip,
+                "Grand Total": total_total
+            }
 
-                personal_subtotal = df_selected["Total (EGP)"].sum()
-                personal_service = personal_subtotal * (service_charge / 100)
-                personal_vat = (personal_subtotal + personal_service) * (vat / 100)
-                personal_total = personal_subtotal + personal_service + personal_vat + tip
+            st.write(full_summary)
+            st.markdown(f"### 🧾 Total Bill: **EGP {total_total:.2f}**")
 
-                summary = {
-                    "Subtotal": personal_subtotal,
-                    "Service Charge": personal_service,
-                    "VAT": personal_vat,
-                    "Tip": tip,
-                    "Total Due": personal_total
-                }
-
-                st.write(summary)
-                st.markdown(f"### 💸 You Owe: **EGP {personal_total:.2f}**")
-
-                # Split among friends feature
-                st.subheader("👥 Split Among Friends")
-                num_people = st.number_input("Number of People Splitting the Bill", min_value=1, value=1, step=1)
-                if num_people > 1:
-                    per_person_share = personal_total / num_people
-                    st.markdown(f"Each person pays: **EGP {per_person_share:.2f}**")
-                else:
-                    per_person_share = None
-
-                if st.button("📄 Generate Your Invoice PDF"):
-                    pdf_path = generate_pdf(df_selected, summary, per_person=per_person_share or personal_total)
-                    with open(pdf_path, "rb") as f:
-                        st.download_button("Download Your PDF", f, file_name="my_invoice.pdf")
-
-                with st.expander("📧 Send Your Invoice by Email"):
-                    email = st.text_input("Your Email")
-                    subject = st.text_input("Email Subject", value="My Split Invoice")
-                    body = st.text_area("Email Body", value="Here’s the part I’m paying for.")
-                    if st.button("Send My Part via Email"):
-                        pdf_path = generate_pdf(df_selected, summary, per_person=per_person_share or personal_total)
-                        result = send_email(email, subject, body, pdf_path)
-                        if result:
-                            st.success("📤 Email sent successfully!")
+            st.subheader("👥 Split Among Friends")
+            num_people = st.number_input("Number of People Splitting the Bill", min_value=1, value=1, step=1)
+            if num_people > 1:
+                per_person_share = total_total / num_people
+                st.markdown(f"Each person pays: **EGP {per_person_share:.2f}**")
             else:
-                st.info("Select the items you personally ordered to see your total.")
+                per_person_share = None
+
+            if st.button("📄 Generate Full Invoice PDF"):
+                pdf_path = generate_pdf(df, full_summary, per_person=per_person_share or total_total)
+                with open(pdf_path, "rb") as f:
+                    st.download_button("Download Full Invoice PDF", f, file_name="full_invoice.pdf")
+
+            with st.expander("📧 Send Full Invoice by Email"):
+                email = st.text_input("Recipient Email")
+                subject = st.text_input("Email Subject", value="Full Invoice Summary")
+                body = st.text_area("Email Body", value="Attached is the full invoice split.")
+                if st.button("Send Full Invoice via Email"):
+                    pdf_path = generate_pdf(df, full_summary, per_person=per_person_share or total_total)
+                    result = send_email(email, subject, body, pdf_path)
+                    if result:
+                        st.success("📤 Email sent successfully!")
         else:
             st.warning("⚠️ No items were detected. Try a clearer image.")
