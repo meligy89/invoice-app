@@ -15,24 +15,29 @@ def enhance_image(image):
     enhancer = ImageEnhance.Contrast(image)
     return enhancer.enhance(2)
 
-# --- Improved Smart OCR for Bills ---
+# --- Smarter OCR for Real-World Bills ---
 def extract_items(image):
     image = enhance_image(image)
-    text = pytesseract.image_to_string(image)
+    raw_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DATAFRAME)
 
-    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    raw_data = raw_data.dropna(subset=["text"])
+    raw_data = raw_data[raw_data["conf"] > 40]  # Filter low-confidence OCR results
+    text_lines = raw_data.groupby("line_num")["text"].apply(lambda x: " ".join(x)).tolist()
+
+    ignore_keywords = ["subtotal", "vat", "total", "service", "thank", "count", "cash", "payment", "balance", "%", "tip", "delivery"]
+    currency_variants = ["EGP", "LE", "L.E.", "L.E", "جنيه"]
+
     items = []
 
-    ignore_keywords = ["subtotal", "vat", "total", "service", "thank", "count", "cash", "payment", "balance", "%", "tip"]
-
-    for i, line in enumerate(lines):
+    for i, line in enumerate(text_lines):
         if any(x.lower() in line.lower() for x in ignore_keywords):
             continue
 
-        # Normalize currency formats
-        line = line.replace("LE", "EGP").replace("L.E.", "EGP").replace("L.E", "EGP")
-        price_match = re.search(r'(EGP)?\s*([\d,]+\.\d{2})\s*(EGP)?', line, re.IGNORECASE)
+        # Normalize currency terms
+        for cur in currency_variants:
+            line = line.replace(cur, "EGP")
 
+        price_match = re.search(r'(EGP)?\s*([\d,]+\.\d{2})\s*(EGP)?', line, re.IGNORECASE)
         if not price_match:
             continue
 
@@ -51,7 +56,7 @@ def extract_items(image):
             item_name = qty_match.group(2)
         else:
             if i > 0:
-                prev_line = lines[i - 1].strip()
+                prev_line = text_lines[i - 1]
                 if not any(x.lower() in prev_line.lower() for x in ignore_keywords):
                     item_name = prev_line
             else:
@@ -120,13 +125,19 @@ st.image("logo.png", width=150)
 st.title("Yalla Split & Pay")
 
 uploaded_file = st.file_uploader("Upload Invoice Image", type=["jpg", "jpeg", "png"])
+captured_image = st.camera_input("Or capture invoice via camera")
 
+image = None
 if uploaded_file:
     image = Image.open(uploaded_file)
+elif captured_image:
+    image = Image.open(captured_image)
+
+if image:
     df = extract_items(image)
 
     if df.empty:
-        st.warning("No valid items found.")
+        st.warning("No valid items found. Try retaking the photo or uploading a clearer image.")
     else:
         st.subheader("Extracted Items")
         st.dataframe(df)
