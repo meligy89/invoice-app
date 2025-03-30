@@ -1,111 +1,185 @@
 import streamlit as st
 from PIL import Image
-import pytesseract
 import pandas as pd
+import pytesseract
+import re
 from fpdf import FPDF
-import io
-import openai
+import tempfile
 import os
+import io
+import yagmail
 
-# Set your OpenAI API key here or in Streamlit Secrets
-openai.api_key = st.secrets["openai_api_key"] if "openai_api_key" in st.secrets else os.getenv("OPENAI_API_KEY")
-
-# ---------- OCR TEXT EXTRACTION ----------
+# --- OCR with Tesseract ---
 def extract_text_tesseract(image):
     text = pytesseract.image_to_string(image)
-    return text.split('\n')
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    return lines
 
-# ---------- GPT PARSING ----------
-def parse_with_gpt(text_lines):
-    prompt = (
-        "You are a helpful assistant extracting itemized invoice data. "
-        "From the following lines, extract a JSON list of items with: Item, Qty, Unit Price, Total. "
-        "Ensure multiline items are grouped together.\n\n"
-        "Example Output:\n"
-        "[{'Item': 'Chicken Shawarma with garlic sauce', 'Qty': 2, 'Unit Price': 6.25, 'Total': 12.50}, ...]\n\n"
-        f"Lines:\n{chr(10).join(text_lines)}"
-    )
+# --- Extract Items ---
+def extract_items(image):
+    text_lines = extract_text_tesseract(image)
+    ignore_keywords = ["subtotal", "vat", "total", "service", "thank", "count", "cash", "payment", "balance", "%", "tip", "delivery"]
+    currency_variants = ["EGP", "LE", "L.E.", "L.E", "\u062c\u0646\u064a\u0647"]
 
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2
-    )
+    items = []
 
-    content = response["choices"][0]["message"]["content"]
-    try:
-        data = eval(content, {}, {})
-        return pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"Failed to parse GPT output: {e}")
-        return pd.DataFrame()
+    for i, line in enumerate(text_lines):
+        if any(x.lower() in line.lower() for x in ignore_keywords):
+            continue
 
-# ---------- PDF EXPORT ----------
-def export_to_pdf(df, tip_percentage, total_amount, per_person, num_people):
+        for cur in currency_variants:
+            line = line.replace(cur, "EGP")
+
+        price_match = re.search(r'(EGP)?\s*([\d,]+\.\d{2})\s*(EGP)?', line, re.IGNORECASE)
+        if not price_match:
+            continue
+
+        price = float(price_match.group(2).replace(',', ''))
+        line_clean = re.sub(r'(EGP)?\s*[\d,]+\.\d{2}\s*(EGP)?', '', line, flags=re.IGNORECASE).strip()
+
+        qty = 1
+        item_name = ""
+        qty_match = re.match(r'^(\d+)[\s\-_.xX*]*(.*)', line_clean)
+        if qty_match:
+            try:
+                qty = int(qty_match.group(1))
+            except:
+                qty = 1
+            item_name = qty_match.group(2)
+        else:
+            if i > 0:
+                prev_line = text_lines[i - 1]
+                if not any(x.lower() in prev_line.lower() for x in ignore_keywords):
+                    item_name = prev_line
+            else:
+                item_name = line_clean
+
+        item_name = re.sub(r'[^\w\s]', '', item_name)
+        item_name = ' '.join(item_name.split())
+        item_name = item_name.title()
+
+        unit_price = round(price / qty, 2) if qty > 0 else price
+
+        items.append({
+            "Item": item_name if item_name else "Unnamed Item",
+            "Qty": qty,
+            "Unit Price (EGP)": unit_price,
+            "Total (EGP)": price
+        })
+
+    return pd.DataFrame(items)
+
+# --- PDF Generator ---
+def generate_pdf(df_selected, summary, per_person, filename="invoice.pdf"):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt="Yalla Split & Pay Invoice", ln=True, align='C')
-    pdf.ln(10)
 
-    for index, row in df.iterrows():
-        line = f"{row['Qty']} x {row['Item']} @ {row['Unit Price']:.2f} = {row['Total']:.2f}"
-        pdf.cell(200, 10, txt=line, ln=True)
+    logo_path = "logo.png"
+    if os.path.exists(logo_path):
+        pdf.image(logo_path, x=10, y=8, w=40)
+        pdf.ln(30)
+    else:
+        pdf.ln(10)
+
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(200, 10, txt="Invoice Summary", ln=True, align='C')
+    pdf.set_font("Arial", size=12)
+    pdf.ln(5)
+
+    for index, row in df_selected.iterrows():
+        pdf.cell(200, 10, txt=f"{row['Item']} - Qty: {row['Qty']} - Unit: {row['Unit Price (EGP)']} - Total: {row['Total (EGP)']}", ln=True)
 
     pdf.ln(5)
-    pdf.cell(200, 10, txt=f"Tip: {tip_percentage}%", ln=True)
-    pdf.cell(200, 10, txt=f"Grand Total: {total_amount:.2f}", ln=True)
-    pdf.cell(200, 10, txt=f"Split among {num_people} people: {per_person:.2f} each", ln=True)
+    for k, v in summary.items():
+        pdf.cell(200, 10, txt=f"{k}: EGP {v:.2f}", ln=True)
 
-    output = io.BytesIO()
-    pdf.output(output)
-    return output
+    pdf.cell(200, 10, txt=f"Total: EGP {per_person:.2f}", ln=True)
 
-# ---------- STREAMLIT UI ----------
-st.title("🧾 Yalla Split & Pay (AI-Powered)")
-st.write("Upload an invoice image. AI will extract and split the bill. You can review and edit items before splitting.")
+    path = os.path.join(tempfile.gettempdir(), filename)
+    pdf.output(path)
+    return path
 
-uploaded_file = st.file_uploader("Choose an invoice image", type=["png", "jpg", "jpeg", "webp"])
+# --- Email Invoice ---
+def send_email(recipient, subject, body, attachment_path):
+    sender = os.environ.get("EMAIL_USER")
+    password = os.environ.get("EMAIL_PASS")
+    if not sender or not password:
+        st.error("❌ Email credentials not set in environment variables.")
+        return
+    yag = yagmail.SMTP(sender, password)
+    yag.send(to=recipient, subject=subject, contents=body, attachments=attachment_path)
+    return True
 
-if uploaded_file is not None:
-    try:
-        image = Image.open(uploaded_file)
-        st.image(image, caption="Uploaded Invoice", use_column_width=True)
+# --- Streamlit App UI ---
+st.set_page_config(page_title="Yalla Split & Pay", page_icon="💸")
 
-        text_lines = extract_text_tesseract(image)
-        st.subheader("🔍 OCR Result")
-        st.code("\n".join(text_lines))
+logo_path = "logo.png"
+if os.path.exists(logo_path):
+    st.image(logo_path, width=150)
 
-        with st.spinner("Using GPT to extract items..."):
-            df = parse_with_gpt(text_lines)
+st.title("💸 Yalla Split & Pay")
+st.write("Upload your invoice image, extract items, choose what you had, and get your share!")
 
-        if df.empty:
-            st.warning("Could not detect any items. Try a clearer image or check the OCR.")
+uploaded_image = st.file_uploader("📸 Upload an invoice image", type=["png", "jpg", "jpeg"])
+
+if uploaded_image:
+    image = Image.open(uploaded_image)
+    st.image(image, caption="Uploaded Image", use_container_width=True)
+
+    with st.spinner("🧠 Extracting items from invoice..."):
+        df = extract_items(image)
+
+    if not df.empty:
+        st.success("✅ Items extracted successfully!")
+        st.write("### 🛒 Select your items")
+
+        selected_rows = st.multiselect(
+            "Select what you personally ordered:",
+            options=df.index,
+            format_func=lambda i: f"{df.at[i, 'Qty']}x {df.at[i, 'Item']} - EGP {df.at[i, 'Total (EGP)']:.2f}"
+        )
+
+        if selected_rows:
+            df_selected = df.loc[selected_rows]
+            st.dataframe(df_selected)
+
+            st.subheader("💰 Your Personal Summary")
+            service_charge = st.number_input("Service Charge %", value=12.0, key="your_service")
+            vat = st.number_input("VAT %", value=14.0, key="your_vat")
+            tip = st.number_input("Optional Tip (EGP)", value=0.0, key="your_tip")
+
+            personal_subtotal = df_selected["Total (EGP)"].sum()
+            personal_service = personal_subtotal * (service_charge / 100)
+            personal_vat = (personal_subtotal + personal_service) * (vat / 100)
+            personal_total = personal_subtotal + personal_service + personal_vat + tip
+
+            summary = {
+                "Subtotal": personal_subtotal,
+                "Service Charge": personal_service,
+                "VAT": personal_vat,
+                "Tip": tip,
+                "Total Due": personal_total
+            }
+
+            st.write(summary)
+            st.markdown(f"### 💸 You Owe: **EGP {personal_total:.2f}**")
+
+            if st.button("📄 Generate Your Invoice PDF"):
+                pdf_path = generate_pdf(df_selected, summary, per_person=personal_total)
+                with open(pdf_path, "rb") as f:
+                    st.download_button("Download Your PDF", f, file_name="my_invoice.pdf")
+
+            with st.expander("📧 Send Your Invoice by Email"):
+                email = st.text_input("Your Email")
+                subject = st.text_input("Email Subject", value="My Split Invoice")
+                body = st.text_area("Email Body", value="Here’s the part I’m paying for.")
+                if st.button("Send My Part via Email"):
+                    pdf_path = generate_pdf(df_selected, summary, per_person=personal_total)
+                    result = send_email(email, subject, body, pdf_path)
+                    if result:
+                        st.success("📤 Email sent successfully!")
         else:
-            st.subheader("📝 Edit Extracted Items")
-            df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
-
-            tip_percentage = st.slider("Tip (%)", 0, 30, 10)
-            num_people = st.number_input("Number of people splitting", min_value=1, value=2, step=1)
-
-            subtotal = df["Total"].sum()
-            tip_amount = subtotal * (tip_percentage / 100)
-            grand_total = subtotal + tip_amount
-            per_person = grand_total / num_people
-
-            st.markdown(f"### 💵 Subtotal: {subtotal:.2f}")
-            st.markdown(f"### ➕ Tip ({tip_percentage}%): {tip_amount:.2f}")
-            st.markdown(f"### 🧾 Grand Total: {grand_total:.2f}")
-            st.markdown(f"### 👥 Each Person Pays: {per_person:.2f}")
-
-            if st.button("📄 Export Bill to PDF"):
-                pdf_file = export_to_pdf(df, tip_percentage, grand_total, per_person, num_people)
-                st.download_button(
-                    label="Download PDF",
-                    data=pdf_file.getvalue(),
-                    file_name="yalla_split_invoice.pdf",
-                    mime="application/pdf"
-                )
-
-    except Exception as e:
-        st.error(f"Something went wrong: {e}")
+            st.info("Select the items you personally ordered to see your total.")
+    else:
+        st.warning("⚠️ No items were detected. Try a clearer image.")
