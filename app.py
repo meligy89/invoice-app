@@ -6,8 +6,8 @@ import re
 import io
 from fpdf import FPDF
 
-st.set_page_config(page_title="Invoice Extractor & Splitter", layout="wide")
-st.title("🧾 Invoice Extractor & Bill Splitter")
+st.set_page_config(page_title="Yalla Split & Pay", layout="wide")
+st.title("🧾 Yalla Split & Pay")
 st.markdown("""
 <style>
     .stButton>button {
@@ -39,7 +39,6 @@ elif uploaded_file:
     image = Image.open(uploaded_file)
 
 if image:
-    st.subheader("🖼️ Real-Time Preview")
     st.image(image, caption="Invoice Image", use_column_width=True)
 
     # OCR configuration
