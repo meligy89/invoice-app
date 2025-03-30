@@ -15,27 +15,61 @@ def enhance_image(image):
     enhancer = ImageEnhance.Contrast(image)
     return enhancer.enhance(2)
 
+import re
+import pandas as pd
+
 def extract_items(image):
-    image = enhance_image(image)
+    from PIL import ImageEnhance, ImageFilter
+    image = image.convert('L')
+    image = image.filter(ImageFilter.SHARPEN)
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(2)
+
     text = pytesseract.image_to_string(image)
-    lines = text.split('\n')
-    pattern = re.compile(r'^(\d+)\s+(.*?)\s+EGP\s+([\d,\.]+)$')
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
     items = []
 
-    for line in lines:
-        match = pattern.match(line.strip())
-        if match:
-            qty, name, total_price = match.groups()
-            qty = int(qty)
-            total_price = float(total_price.replace(',', ''))
-            unit_price = round(total_price / qty, 2) if qty > 0 else 0
-            items.append({
-                "Item": name.strip(),
-                "Qty (Invoice)": qty,
-                "Unit Price (EGP)": unit_price,
-                "Total (EGP)": total_price
-            })
+    for i, line in enumerate(lines):
+        if "EGP" in line and not any(x in line for x in ["Subtotal", "Service", "Total", "VAT", "%", "Count"]):
+            price_match = re.search(r'EGP\s*([\d,]+\.\d{2})', line)
+            price = float(price_match.group(1).replace(',', '')) if price_match else None
+            line_clean = re.sub(r'EGP\s*[\d,]+\.\d{2}', '', line).strip()
+
+            qty = 1
+            item = ""
+
+            # Extract quantity + item
+            qty_match = re.match(r'^(\d+)[\s\-_.]*(.*)', line_clean)
+            if qty_match:
+                qty = int(qty_match.group(1))
+                item = qty_match.group(2)
+            elif i > 0:
+                prev = lines[i - 1]
+                prev_match = re.match(r'^(\d+)[\s\-_.]*(.*)', prev)
+                if prev_match:
+                    qty = int(prev_match.group(1))
+                    item = prev_match.group(2)
+                else:
+                    item = line_clean
+            else:
+                item = line_clean
+
+            # Clean item name
+            item = re.sub(r'[^\w\s]', '', item)
+            item = ' '.join(item.split())  # normalize spaces
+            item = item.title()
+
+            if price:
+                unit_price = round(price / qty, 2) if qty > 0 else price
+                items.append({
+                    "Item": item,
+                    "Qty (Invoice)": qty,
+                    "Unit Price (EGP)": unit_price,
+                    "Total (EGP)": price
+                })
+
     return pd.DataFrame(items)
+
 
 # --- PDF Generator with Logo and Sans-Serif Font ---
 def generate_pdf(df_selected, summary, per_person, filename="invoice.pdf"):
