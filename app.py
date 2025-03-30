@@ -33,7 +33,6 @@ def extract_items(image):
         if any(x.lower() in line.lower() for x in ignore_keywords):
             continue
 
-        # Normalize currency terms
         for cur in currency_variants:
             line = line.replace(cur, "EGP")
 
@@ -44,7 +43,6 @@ def extract_items(image):
         price = float(price_match.group(2).replace(',', ''))
         line_clean = re.sub(r'(EGP)?\s*[\d,]+\.\d{2}\s*(EGP)?', '', line, flags=re.IGNORECASE).strip()
 
-        # Try extracting quantity
         qty = 1
         item_name = ""
         qty_match = re.match(r'^(\d+)[\s\-_.xX*]*(.*)', line_clean)
@@ -125,19 +123,63 @@ st.image("logo.png", width=150)
 st.title("Yalla Split & Pay")
 
 uploaded_file = st.file_uploader("Upload Invoice Image", type=["jpg", "jpeg", "png"])
-captured_image = st.camera_input("Or capture invoice via camera")
 
-image = None
 if uploaded_file:
     image = Image.open(uploaded_file)
-elif captured_image:
-    image = Image.open(captured_image)
-
-if image:
     df = extract_items(image)
 
     if df.empty:
-        st.warning("No valid items found. Try retaking the photo or uploading a clearer image.")
+        st.warning("No valid items found. Try uploading a clearer image or enter items manually.")
+
+        # Raw OCR text and line suggestions
+        raw_text = pytesseract.image_to_string(enhance_image(image))
+        raw_lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
+
+        with st.expander("🔍 Show Raw OCR Text"):
+            st.text(raw_text)
+
+        st.subheader("📋 Manually Correct or Add Items")
+
+        num_manual_items = st.number_input("How many items do you want to enter?", min_value=1, step=1, value=min(5, len(raw_lines)))
+        manual_items = []
+
+        for i in range(num_manual_items):
+            suggested_line = raw_lines[i] if i < len(raw_lines) else ""
+            qty_guess = 1
+            price_guess = 0.0
+
+            price_match = re.search(r'([\d,]+\.\d{2})', suggested_line)
+            if price_match:
+                try:
+                    price_guess = float(price_match.group(1).replace(',', ''))
+                except:
+                    pass
+
+            qty_match = re.match(r'^(\d+)[\s\-_.xX*]*(.*)', suggested_line)
+            name_guess = suggested_line
+            if qty_match:
+                try:
+                    qty_guess = int(qty_match.group(1))
+                    name_guess = qty_match.group(2)
+                except:
+                    qty_guess = 1
+
+            name_guess = re.sub(r'[^\w\s]', '', name_guess).title()
+
+            with st.expander(f"Item {i + 1}"):
+                item_name = st.text_input(f"Item Name {i + 1}", value=name_guess, key=f"name_{i}")
+                qty = st.number_input(f"Quantity {i + 1}", min_value=1, step=1, value=qty_guess, key=f"qty_{i}")
+                unit_price = st.number_input(f"Unit Price (EGP) {i + 1}", min_value=0.0, step=0.1, value=price_guess, key=f"price_{i}")
+                total = round(qty * unit_price, 2)
+                manual_items.append({
+                    "Item": item_name,
+                    "Qty": qty,
+                    "Unit Price (EGP)": unit_price,
+                    "Total (EGP)": total
+                })
+
+        if manual_items:
+            df_selected = pd.DataFrame(manual_items)
     else:
         st.subheader("Extracted Items")
         st.dataframe(df)
@@ -157,42 +199,43 @@ if image:
                 "Total (EGP)": round(total, 2)
             })
 
-        if selected_items:
-            df_selected = pd.DataFrame(selected_items)
-            st.subheader("Your Selections")
-            st.dataframe(df_selected)
+        df_selected = pd.DataFrame(selected_items) if selected_items else None
 
-            tip = st.number_input("Optional Tip (EGP)", min_value=0.0, value=0.0)
-            people = st.number_input("Split between how many people?", min_value=1, step=1, value=1)
+    if 'df_selected' in locals() and not df_selected.empty:
+        st.subheader("Your Selections")
+        st.dataframe(df_selected)
 
-            base = df_selected["Total (EGP)"].sum()
-            service = round(base * 0.12, 2)
-            subtotal = round(base + service, 2)
-            vat = round(subtotal * 0.14, 2)
-            final = round(subtotal + vat + tip, 2)
-            per_person = round(final / people, 2)
+        tip = st.number_input("Optional Tip (EGP)", min_value=0.0, value=0.0)
+        people = st.number_input("Split between how many people?", min_value=1, step=1, value=1)
 
-            summary = {
-                "Base Total": base,
-                "Service (12%)": service,
-                "Subtotal": subtotal,
-                "VAT (14%)": vat,
-                "Tip": tip,
-                "Final Total": final
-            }
+        base = df_selected["Total (EGP)"].sum()
+        service = round(base * 0.12, 2)
+        subtotal = round(base + service, 2)
+        vat = round(subtotal * 0.14, 2)
+        final = round(subtotal + vat + tip, 2)
+        per_person = round(final / people, 2)
 
-            st.subheader("Bill Summary")
-            for k, v in summary.items():
-                st.write(f"{k}: EGP {v:.2f}")
-            st.success(f"Each Person Pays: EGP {per_person:.2f}")
+        summary = {
+            "Base Total": base,
+            "Service (12%)": service,
+            "Subtotal": subtotal,
+            "VAT (14%)": vat,
+            "Tip": tip,
+            "Final Total": final
+        }
 
-            if st.button("Generate PDF Invoice"):
-                pdf_path = generate_pdf(df_selected, summary, per_person)
-                with open(pdf_path, "rb") as f:
-                    st.download_button("Download PDF", f, file_name="invoice.pdf", mime="application/pdf")
+        st.subheader("Bill Summary")
+        for k, v in summary.items():
+            st.write(f"{k}: EGP {v:.2f}")
+        st.success(f"Each Person Pays: EGP {per_person:.2f}")
 
-            st.subheader("Email Invoice")
-            email_to = st.text_input("Recipient Email")
-            if st.button("Send Email") and email_to:
-                if send_email(email_to, "Your Invoice", "Please find your invoice attached.", pdf_path):
-                    st.success("Invoice emailed successfully.")
+        if st.button("Generate PDF Invoice"):
+            pdf_path = generate_pdf(df_selected, summary, per_person)
+            with open(pdf_path, "rb") as f:
+                st.download_button("Download PDF", f, file_name="invoice.pdf", mime="application/pdf")
+
+        st.subheader("Email Invoice")
+        email_to = st.text_input("Recipient Email")
+        if st.button("Send Email") and email_to:
+            if send_email(email_to, "Your Invoice", "Please find your invoice attached.", pdf_path):
+                st.success("Invoice emailed successfully.")
