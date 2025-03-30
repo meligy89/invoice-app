@@ -31,6 +31,32 @@ def extract_text_tesseract(image):
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     return lines
 
+# --- Fallback OCR Parsing ---
+def basic_ocr_parse(lines):
+    items = []
+    item_pattern = re.compile(r"(.+?)\\s+x?(\\d+)?\\s+([\\d.]+)\\s+([\\d.]+)$")
+
+    for line in lines:
+        match = item_pattern.search(line)
+        if match:
+            item_name = match.group(1).strip()
+            qty = int(match.group(2)) if match.group(2) else 1
+            unit_price = float(match.group(3))
+            total = float(match.group(4))
+            items.append({
+                "Item": item_name,
+                "Qty": qty,
+                "Unit Price": unit_price,
+                "Total": total
+            })
+
+    if items:
+        st.info("✅ Fallback OCR parsing succeeded.")
+    else:
+        st.warning("⚠️ No items detected with fallback OCR parsing.")
+
+    return pd.DataFrame(items)
+
 # --- GPT Parsing with Retry + Fallback ---
 def parse_with_gpt(text_lines):
     prompt = (
@@ -77,8 +103,8 @@ def parse_with_gpt(text_lines):
 
         st.warning(f"⚠️ Switching to backup model after retries with {model} failed.")
 
-    st.error("❌ All models failed due to rate limits or errors.")
-    return pd.DataFrame()
+    st.error("❌ All models failed. Falling back to basic OCR extraction...")
+    return basic_ocr_parse(text_lines)
 
 # --- PDF Generator ---
 def generate_pdf(df_selected, summary, per_person, filename="invoice.pdf"):
@@ -99,7 +125,7 @@ def generate_pdf(df_selected, summary, per_person, filename="invoice.pdf"):
     pdf.ln(5)
 
     for index, row in df_selected.iterrows():
-        pdf.cell(200, 10, txt=f"{row['Item']} - Qty: {row['Qty']} - Unit: {row['Unit Price (EGP)']} - Total: {row['Total (EGP)']}", ln=True)
+        pdf.cell(200, 10, txt=f"{row['Item']} - Qty: {row['Qty']} - Unit: {row['Unit Price']} - Total: {row['Total']}", ln=True)
 
     pdf.ln(5)
     for k, v in summary.items():
