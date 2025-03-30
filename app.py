@@ -75,6 +75,14 @@ def generate_pdf(df_selected, summary, per_person, filename="invoice.pdf"):
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 
+    # --- Website/Brand Logo ---
+    logo_path = "yallasplit_logo.png"  # Change to your logo file
+    if os.path.exists(logo_path):
+        pdf.image(logo_path, x=10, y=8, w=40)
+        pdf.ln(30)
+    else:
+        pdf.ln(10)
+
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(200, 10, txt="Invoice Summary", ln=True, align='C')
     pdf.set_font("Arial", size=12)
@@ -105,6 +113,8 @@ def send_email(recipient, subject, body, attachment_path):
     return True
 
 # --- Streamlit App UI ---
+st.set_page_config(page_title="Yalla Split & Pay", page_icon="💸")
+
 st.title("💸 Yalla Split & Pay")
 st.write("Upload your invoice image, extract items, split the bill, and send via email!")
 
