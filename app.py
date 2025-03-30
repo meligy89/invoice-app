@@ -11,6 +11,8 @@ import yagmail
 import json
 from openai import OpenAI
 import numpy as np
+import time
+from openai.error import RateLimitError
 
 # --- OpenAI Client Setup ---
 client = OpenAI(api_key=st.secrets["openai_api_key"] if "openai_api_key" in st.secrets else os.getenv("OPENAI_API_KEY"))
@@ -30,7 +32,7 @@ def extract_text_tesseract(image):
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     return lines
 
-# --- GPT Parsing ---
+# --- GPT Parsing with Retry + Fallback ---
 def parse_with_gpt(text_lines):
     prompt = (
         "You are an intelligent invoice parser. From the following lines, extract items with:\n"
@@ -40,22 +42,44 @@ def parse_with_gpt(text_lines):
         f"Lines:\n{chr(10).join(text_lines)}"
     )
 
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2
-    )
+    models = ["gpt-3.5-turbo", "gpt-4"]
+    max_retries = 5
+    delay = 2  # seconds
 
-    content = response.choices[0].message.content
-    st.subheader("🧠 GPT Raw Response")
-    st.code(content)
+    for model in models:
+        for attempt in range(max_retries):
+            try:
+                st.info(f"Using model: {model}")
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2
+                )
+                content = response.choices[0].message.content
 
-    try:
-        data = json.loads(content)
-        return pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"Failed to parse GPT output: {e}")
-        return pd.DataFrame()
+                st.subheader(f"🧠 GPT Raw Response ({model})")
+                st.code(content)
+
+                try:
+                    data = json.loads(content)
+                    return pd.DataFrame(data)
+                except Exception as e:
+                    st.error(f"Failed to parse GPT output: {e}")
+                    return pd.DataFrame()
+
+            except RateLimitError:
+                st.warning(f"⚠️ Rate limit hit on {model}. Retrying in {delay} seconds...")
+                time.sleep(delay)
+                delay *= 2  # exponential backoff
+
+            except Exception as e:
+                st.error(f"❌ Unexpected error with {model}: {e}")
+                break  # try next model
+
+        st.warning(f"⚠️ Switching to backup model after retries with {model} failed.")
+
+    st.error("❌ All models failed due to rate limits or errors.")
+    return pd.DataFrame()
 
 # --- PDF Generator ---
 def generate_pdf(df_selected, summary, per_person, filename="invoice.pdf"):
