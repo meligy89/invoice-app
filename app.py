@@ -95,7 +95,7 @@ def generate_pdf(df_selected, summary, per_person, filename="invoice.pdf"):
     for k, v in summary.items():
         pdf.cell(200, 10, txt=f"{k}: EGP {v:.2f}", ln=True)
 
-    pdf.cell(200, 10, txt=f"Split per person: EGP {per_person:.2f}", ln=True)
+    pdf.cell(200, 10, txt=f"Total: EGP {per_person:.2f}", ln=True)
 
     path = os.path.join(tempfile.gettempdir(), filename)
     pdf.output(path)
@@ -121,60 +121,67 @@ if os.path.exists(logo_path):
     st.image(logo_path, width=150)
 
 st.title("💸 Yalla Split & Pay")
-st.write("Upload your invoice image, extract items, split the bill, and send via email!")
+st.write("Upload your invoice image, extract items, choose what you had, and get your share!")
 
 uploaded_image = st.file_uploader("📸 Upload an invoice image", type=["png", "jpg", "jpeg"])
 
 if uploaded_image:
     image = Image.open(uploaded_image)
-    st.image(image, caption="Uploaded Image", use_container_width=True)
+    st.image(image, caption="Uploaded Image", use_column_width=True)
 
     with st.spinner("🧠 Extracting items from invoice..."):
         df = extract_items(image)
 
     if not df.empty:
         st.success("✅ Items extracted successfully!")
-        st.dataframe(df)
+        st.write("### 🛒 Select your items")
 
-        st.subheader("🔢 Invoice Summary")
-        service_charge = st.number_input("Service Charge %", value=12.0)
-        vat = st.number_input("VAT %", value=14.0)
-        tip = st.number_input("Optional Tip (EGP)", value=0.0)
+        selected_rows = st.multiselect(
+            "Select what you personally ordered:",
+            options=df.index,
+            format_func=lambda i: f"{df.at[i, 'Qty']}x {df.at[i, 'Item']} - EGP {df.at[i, 'Total (EGP)']:.2f}"
+        )
 
-        subtotal = df["Total (EGP)"].sum()
-        service_amt = subtotal * (service_charge / 100)
-        vat_amt = (subtotal + service_amt) * (vat / 100)
-        total = subtotal + service_amt + vat_amt + tip
+        if selected_rows:
+            df_selected = df.loc[selected_rows]
+            st.dataframe(df_selected)
 
-        summary = {
-            "Subtotal": subtotal,
-            "Service Charge": service_amt,
-            "VAT": vat_amt,
-            "Tip": tip,
-            "Grand Total": total
-        }
+            st.subheader("💰 Your Personal Summary")
+            service_charge = st.number_input("Service Charge %", value=12.0, key="your_service")
+            vat = st.number_input("VAT %", value=14.0, key="your_vat")
+            tip = st.number_input("Optional Tip (EGP)", value=0.0, key="your_tip")
 
-        st.write(summary)
+            personal_subtotal = df_selected["Total (EGP)"].sum()
+            personal_service = personal_subtotal * (service_charge / 100)
+            personal_vat = (personal_subtotal + personal_service) * (vat / 100)
+            personal_total = personal_subtotal + personal_service + personal_vat + tip
 
-        people = st.number_input("Number of People to Split With", min_value=1, value=2, step=1)
-        per_person = round(total / people, 2)
-        st.write(f"Each person pays: **EGP {per_person:.2f}**")
+            summary = {
+                "Subtotal": personal_subtotal,
+                "Service Charge": personal_service,
+                "VAT": personal_vat,
+                "Tip": tip,
+                "Total Due": personal_total
+            }
 
-        if st.button("📄 Generate PDF Invoice"):
-            pdf_path = generate_pdf(df, summary, per_person)
-            with open(pdf_path, "rb") as f:
-                st.download_button("Download Invoice PDF", f, file_name="invoice.pdf")
+            st.write(summary)
+            st.markdown(f"### 💸 You Owe: **EGP {personal_total:.2f}**")
 
-        with st.expander("📧 Send via Email"):
-            email = st.text_input("Recipient Email")
-            subject = st.text_input("Subject", value="Your Shared Invoice")
-            body = st.text_area("Message", value="Here's your split invoice summary.")
-            if st.button("Send Email"):
-                pdf_path = generate_pdf(df, summary, per_person)
-                result = send_email(email, subject, body, pdf_path)
-                if result:
-                    st.success("📤 Email sent successfully!")
-                else:
-                    st.error("Failed to send email.")
+            if st.button("📄 Generate Your Invoice PDF"):
+                pdf_path = generate_pdf(df_selected, summary, per_person=personal_total)
+                with open(pdf_path, "rb") as f:
+                    st.download_button("Download Your PDF", f, file_name="my_invoice.pdf")
+
+            with st.expander("📧 Send Your Invoice by Email"):
+                email = st.text_input("Your Email")
+                subject = st.text_input("Email Subject", value="My Split Invoice")
+                body = st.text_area("Email Body", value="Here’s the part I’m paying for.")
+                if st.button("Send My Part via Email"):
+                    pdf_path = generate_pdf(df_selected, summary, per_person=personal_total)
+                    result = send_email(email, subject, body, pdf_path)
+                    if result:
+                        st.success("📤 Email sent successfully!")
+        else:
+            st.info("Select the items you personally ordered to see your total.")
     else:
         st.warning("⚠️ No items were detected. Try a clearer image.")
