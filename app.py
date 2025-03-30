@@ -127,7 +127,7 @@ uploaded_image = st.file_uploader("📸 Upload an invoice image", type=["png", "
 
 if uploaded_image:
     image = Image.open(uploaded_image)
-    st.image(image, caption="Uploaded Image", use_column_width=True)
+    st.image(image, caption="Uploaded Image", use_container_width=True)
 
     with st.spinner("🧠 Extracting items from invoice..."):
         df = extract_items(image)
