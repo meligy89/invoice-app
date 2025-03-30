@@ -7,6 +7,7 @@ import io
 from fpdf import FPDF
 
 st.set_page_config(page_title="Yalla Split & Pay", layout="wide")
+st.image("https://i.imgur.com/HN0H6qX.png", width=180)
 st.title("🧾 Yalla Split & Pay")
 st.markdown("""
 <style>
@@ -28,14 +29,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Upload or capture image
-uploaded_file = st.file_uploader("Upload or capture an invoice image", type=["jpg", "jpeg", "png"], label_visibility="visible")
-captured_image = st.camera_input("Or take a photo")
+# Upload image only
+uploaded_file = st.file_uploader("Upload an invoice image", type=["jpg", "jpeg", "png"], label_visibility="visible")
 
 image = None
-if captured_image:
-    image = Image.open(captured_image)
-elif uploaded_file:
+if uploaded_file:
     image = Image.open(uploaded_file)
 
 if image:
