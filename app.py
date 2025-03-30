@@ -114,7 +114,7 @@ st.set_page_config(page_title="Invoice Splitter", layout="wide")
 st.markdown("<style>body { font-family: 'Arial', sans-serif; }</style>", unsafe_allow_html=True)
 
 st.image("logo.png", width=150)
-st.title("Invoice Splitter + Email Export")
+st.title("Yalla Split & Pay")
 
 uploaded_file = st.file_uploader("Upload Invoice Image", type=["jpg", "jpeg", "png"])
 captured_image = st.camera_input("Or capture invoice via camera")
