@@ -12,3 +12,4 @@ pytesseract
 opencv-python-headless
 pdfplumber
 reportlab
+openai
