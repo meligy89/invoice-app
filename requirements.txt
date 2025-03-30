@@ -1,8 +1,6 @@
 streamlit
-pytesseract
-Pillow
-fpdf2
+pillow
+pandas
+fpdf
 yagmail
-paddleocr
-paddlepaddle
 google-cloud-vision
