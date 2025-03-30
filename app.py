@@ -29,15 +29,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Upload image only
-uploaded_file = st.file_uploader("Upload an invoice image", type=["jpg", "jpeg", "png"], label_visibility="visible")
+# Upload invoice image
+uploaded_file = st.file_uploader("Upload an invoice image", type=["jpg", "jpeg", "png"])
 
-image = None
 if uploaded_file:
     image = Image.open(uploaded_file)
-
-if image:
-    st.image(image, caption="Invoice Image", use_column_width=True)
+    st.image(image, caption="Uploaded Invoice", use_column_width=True)
 
     # OCR configuration
     config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789EGP.,abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ '
@@ -63,7 +60,7 @@ if image:
             selected_rows.append(row)
 
     df_selected = pd.DataFrame(selected_rows)
-    st.dataframe(df_selected, use_container_width=True)
+    st.dataframe(df_selected)
 
     # Extract totals
     subtotal_match = re.search(r'Subtotal\s*EGP\s*([\d,]+\.\d{2})', text, re.IGNORECASE)
@@ -76,19 +73,22 @@ if image:
     total = round(subtotal + service + vat, 2)
 
     st.subheader("📊 Summary")
-    st.markdown(f"**Subtotal:** <span style='color:#333;'>EGP {subtotal:,.2f}</span>", unsafe_allow_html=True)
-    st.markdown(f"**Service:** <span style='color:#333;'>EGP {service:,.2f}</span>", unsafe_allow_html=True)
-    st.markdown(f"**VAT:** <span style='color:#333;'>EGP {vat:,.2f}</span>", unsafe_allow_html=True)
-    st.markdown(f"**Total:** <span style='color:#2E8B57;'>EGP {total:,.2f}</span>", unsafe_allow_html=True)
+    st.write(f"**Subtotal:** EGP {subtotal:,.2f}")
+    st.write(f"**Service:** EGP {service:,.2f}")
+    st.write(f"**VAT:** EGP {vat:,.2f}")
+    st.write(f"**Total:** EGP {total:,.2f}")
 
-    tip = st.number_input("💰 Add a tip (EGP):", min_value=0.0, step=1.0)
+    # Optional tip
+    tip = st.number_input("Add a tip (EGP):", min_value=0.0, step=1.0)
     grand_total = total + tip
-    st.markdown(f"**Grand Total (with tip):** <span style='color:#2E8B57;'>EGP {grand_total:,.2f}</span>", unsafe_allow_html=True)
+    st.write(f"**Grand Total (with tip):** EGP {grand_total:,.2f}")
 
-    num_people = st.slider("👥 Split between how many people?", min_value=1, max_value=20, value=1)
+    # Split the bill
+    num_people = st.slider("Split between how many people?", min_value=1, max_value=20, value=1)
     split_amount = grand_total / num_people
-    st.markdown(f"**Each person pays:** <span style='color:#2E8B57;'>EGP {split_amount:,.2f}</span>", unsafe_allow_html=True)
+    st.write(f"Each person pays: EGP {split_amount:,.2f}")
 
+    # Export CSV
     if st.button("Export to CSV"):
         export_df = df_selected.copy()
         export_df.loc[len(export_df.index)] = ["", "Subtotal", subtotal]
@@ -100,6 +100,7 @@ if image:
         csv = export_df.to_csv(index=False).encode('utf-8')
         st.download_button("Download Invoice CSV", data=csv, file_name="invoice_summary.csv", mime="text/csv")
 
+    # Export PDF
     if st.button("Export to PDF"):
         pdf = FPDF()
         pdf.add_page()
