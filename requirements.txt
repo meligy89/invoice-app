@@ -3,3 +3,5 @@ pytesseract
 Pillow
 fpdf2
 yagmail
+paddleocr
+paddlepaddle
