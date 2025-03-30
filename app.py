@@ -8,75 +8,73 @@ import tempfile
 import os
 import yagmail
 
-# --- Enhance and OCR ---
+# --- OCR Helper Functions ---
 def enhance_image(image):
     image = image.convert('L')
     image = image.filter(ImageFilter.SHARPEN)
     enhancer = ImageEnhance.Contrast(image)
     return enhancer.enhance(2)
 
-import re
-import pandas as pd
-
+# --- Smart Generic Item Extractor ---
 def extract_items(image):
-    from PIL import ImageEnhance, ImageFilter
-    image = image.convert('L')
-    image = image.filter(ImageFilter.SHARPEN)
-    enhancer = ImageEnhance.Contrast(image)
-    image = enhancer.enhance(2)
-
+    image = enhance_image(image)
     text = pytesseract.image_to_string(image)
+
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     items = []
 
     for i, line in enumerate(lines):
         if "EGP" in line and not any(x in line for x in ["Subtotal", "Service", "Total", "VAT", "%", "Count"]):
             price_match = re.search(r'EGP\s*([\d,]+\.\d{2})', line)
-            price = float(price_match.group(1).replace(',', '')) if price_match else None
+            if not price_match:
+                continue
+            price = float(price_match.group(1).replace(',', ''))
             line_clean = re.sub(r'EGP\s*[\d,]+\.\d{2}', '', line).strip()
 
             qty = 1
-            item = ""
-
-            # Extract quantity + item
+            item_name = ""
             qty_match = re.match(r'^(\d+)[\s\-_.]*(.*)', line_clean)
             if qty_match:
-                qty = int(qty_match.group(1))
-                item = qty_match.group(2)
+                try:
+                    qty = int(qty_match.group(1))
+                except:
+                    qty = 1
+                item_name = qty_match.group(2)
             elif i > 0:
-                prev = lines[i - 1]
-                prev_match = re.match(r'^(\d+)[\s\-_.]*(.*)', prev)
+                prev_line = lines[i - 1]
+                prev_match = re.match(r'^(\d+)[\s\-_.]*(.*)', prev_line)
                 if prev_match:
-                    qty = int(prev_match.group(1))
-                    item = prev_match.group(2)
+                    try:
+                        qty = int(prev_match.group(1))
+                    except:
+                        qty = 1
+                    item_name = prev_match.group(2)
                 else:
-                    item = line_clean
+                    item_name = line_clean
             else:
-                item = line_clean
+                item_name = line_clean
 
-            # Clean item name
-            item = re.sub(r'[^\w\s]', '', item)
-            item = ' '.join(item.split())  # normalize spaces
-            item = item.title()
+            item_name = re.sub(r'[^\w\s]', '', item_name)
+            item_name = ' '.join(item_name.split())
+            item_name = item_name.title()
 
-            if price:
-                unit_price = round(price / qty, 2) if qty > 0 else price
-                items.append({
-                    "Item": item,
-                    "Qty (Invoice)": qty,
-                    "Unit Price (EGP)": unit_price,
-                    "Total (EGP)": price
-                })
+            unit_price = round(price / qty, 2) if qty > 0 else price
+
+            items.append({
+                "Item": item_name,
+                "Qty (Invoice)": qty,
+                "Unit Price (EGP)": unit_price,
+                "Total (EGP)": price
+            })
 
     return pd.DataFrame(items)
 
-# --- PDF Generator with Logo and Sans-Serif Font ---
+# --- PDF Generator ---
 def generate_pdf(df_selected, summary, per_person, filename="invoice.pdf"):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 
-    # Logo
     logo_path = "logo.png"
     if os.path.exists(logo_path):
         pdf.image(logo_path, x=10, y=8, w=33)
@@ -100,14 +98,13 @@ def generate_pdf(df_selected, summary, per_person, filename="invoice.pdf"):
     pdf.output(path)
     return path
 
-# --- Send Email ---
+# --- Email Invoice ---
 def send_email(recipient, subject, body, attachment_path):
     sender = os.environ.get("EMAIL_USER")
     password = os.environ.get("EMAIL_PASS")
     if not sender or not password:
         st.error("Email credentials not set in environment variables.")
         return
-
     yag = yagmail.SMTP(sender, password)
     yag.send(to=recipient, subject=subject, contents=body, attachments=attachment_path)
     return True
@@ -117,7 +114,7 @@ st.set_page_config(page_title="Invoice Splitter", layout="wide")
 st.markdown("<style>body { font-family: 'Arial', sans-serif; }</style>", unsafe_allow_html=True)
 
 st.image("logo.png", width=150)
-st.title("Yalla Split")
+st.title("Invoice Splitter + Email Export")
 
 uploaded_file = st.file_uploader("Upload Invoice Image", type=["jpg", "jpeg", "png"])
 
